@@ -23,6 +23,7 @@ profile.cov
 # Go workspace file
 go.work
 go.work.sum
+go.sum
 
 # env file
 .env
@@ -30,3 +31,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+*.o
+go-net-trace
+bpf_x86_bpfel.*
+bpf/vmlinux.h
