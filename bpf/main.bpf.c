@@ -20,8 +20,10 @@ typedef int __s32;
 char LICENSE[] SEC("license") = "GPL";
 
 struct traffic_stats {
-  __u64 rx_bytes;
-  __u64 tx_bytes;
+  __u64 rx_udp_bytes;
+  __u64 rx_tcp_bytes;
+  __u64 tx_udp_bytes;
+  __u64 tx_tcp_bytes;
 };
 
 // store byte per PID
@@ -32,21 +34,30 @@ struct {
   __type(value, struct traffic_stats); // store byte sent as value
 } proc_traffic SEC(".maps");
 
-static __always_inline void update_stats(__u32 pid, __u64 len, bool tx) {
+static __always_inline void update_stats(__u32 pid, __u64 len, bool tx,
+                                         bool tcp) {
   if (pid == 0)
     return;
   struct traffic_stats *stats = bpf_map_lookup_elem(&proc_traffic, &pid);
   if (stats) {
-    if (tx)
-      __sync_fetch_and_add(&stats->tx_bytes, len);
+    if (tx && tcp)
+      __sync_fetch_and_add(&stats->tx_tcp_bytes, len);
+    else if (tx && !tcp)
+      __sync_fetch_and_add(&stats->tx_udp_bytes, len);
+    else if (!tx && tcp)
+      __sync_fetch_and_add(&stats->rx_tcp_bytes, len);
     else
-      __sync_fetch_and_add(&stats->rx_bytes, len);
+      __sync_fetch_and_add(&stats->rx_udp_bytes, len);
   } else {
     struct traffic_stats new_stats = {0};
-    if (tx)
-      new_stats.tx_bytes = len;
+    if (tx, tcp)
+      new_stats.tx_tcp_bytes = len;
+    else if (tx, !tcp)
+      new_stats.tx_udp_bytes = len;
+    else if (!tx, tcp)
+      new_stats.rx_tcp_bytes = len;
     else
-      new_stats.rx_bytes = len;
+      new_stats.rx_udp_bytes = len;
     bpf_map_update_elem(&proc_traffic, &pid, &new_stats, BPF_ANY);
   }
 }
@@ -55,7 +66,7 @@ SEC("kprobe/tcp_sendmsg")
 int kprobe_tcp_sendmsg(struct pt_regs *ctx) {
   __u32 pid = bpf_get_current_pid_tgid() >> 32;
   size_t size = (size_t)PT_REGS_PARM3(ctx);
-  update_stats(pid, size, true);
+  update_stats(pid, size, true, true);
   return 0;
 }
 
@@ -63,7 +74,7 @@ SEC("kprobe/tcp_recvmsg")
 int kprobe_tcp_recvmsg(struct pt_regs *ctx) {
   __u32 pid = bpf_get_current_pid_tgid() >> 32;
   size_t len = (size_t)PT_REGS_PARM3(ctx);
-  update_stats(pid, len, false);
+  update_stats(pid, len, false, true);
   return 0;
 }
 
@@ -71,7 +82,7 @@ SEC("kprobe/udp_sendmsg")
 int kprobe_udp_sendmsg(struct pt_regs *ctx) {
   __u32 pid = bpf_get_current_pid_tgid() >> 32;
   size_t len = (size_t)PT_REGS_PARM3(ctx);
-  update_stats(pid, len, true);
+  update_stats(pid, len, true, false);
   return 0;
 }
 
@@ -79,6 +90,6 @@ SEC("kprobe/udp_recvmsg")
 int kprobe_udp_recvmsg(struct pt_regs *ctx) {
   __u32 pid = bpf_get_current_pid_tgid() >> 32;
   size_t len = (size_t)PT_REGS_PARM3(ctx);
-  update_stats(pid, len, false);
+  update_stats(pid, len, false, false);
   return 0;
 }
